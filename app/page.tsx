@@ -3,10 +3,35 @@
 import { useEffect, useState } from "react";
 
 const PASSCODE_STORAGE_KEY = "sprinto-outreach-passcode";
+const HISTORY_STORAGE_KEY = "sprinto-outreach-history";
 
 const DEMO_DOMAINS = ["cal.com", "hasura.io", "zluri.com", "thoughtworks.com", "hubspot.com", "drata.com"];
 
 type RunLog = any;
+
+function loadHistory(): RunLog[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(history: RunLog[]) {
+  try {
+    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
+  } catch {
+    // storage unavailable — history just won't survive a reload
+  }
+}
+
+// First failed gate on a DROPPED run, for the "why companies get dropped" breakdown.
+function dropReason(log: RunLog): string | null {
+  if (log.disposition !== "DROPPED") return null;
+  const failed = log.gates?.find((g: any) => g.verdict === "fail");
+  return failed ? `${failed.gate} · ${failed.name}` : "Unspecified gate";
+}
 
 const STATUS: Record<string, { color: string; soft: string; label: string }> = {
   QUALIFIED: { color: "var(--success)", soft: "var(--success-soft)", label: "Qualified" },
@@ -330,6 +355,66 @@ function buttonStyle(kind: "primary" | "secondary"): React.CSSProperties {
   };
 }
 
+function DispositionBar({ counts }: { counts: { qualified: number; flagged: number; dropped: number; review: number; failed: number } }) {
+  const segments = [
+    { key: "qualified", label: "Qualified", value: counts.qualified, color: "var(--success)" },
+    { key: "flagged", label: "Qualified · flagged", value: counts.flagged, color: "var(--warning)" },
+    { key: "dropped", label: "Dropped", value: counts.dropped, color: "var(--danger)" },
+    { key: "review", label: "Manual review", value: counts.review, color: "var(--text-muted)" },
+    { key: "failed", label: "Failed", value: counts.failed, color: "#64748b" },
+  ].filter((s) => s.value > 0);
+  const total = segments.reduce((t, s) => t + s.value, 0);
+  if (total === 0) return null;
+
+  return (
+    <div style={card({ padding: 16 })}>
+      <div style={sectionLabel()}>Outcome mix</div>
+      <div style={{ display: "flex", width: "100%", height: 10, borderRadius: 999, overflow: "hidden", marginBottom: 12 }}>
+        {segments.map((s) => (
+          <div key={s.key} style={{ width: `${(s.value / total) * 100}%`, background: s.color }} title={`${s.label}: ${s.value}`} />
+        ))}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px" }}>
+        {segments.map((s) => (
+          <span key={s.key} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--text-muted)" }}>
+            <Dot color={s.color} />
+            {s.label} <strong style={{ color: "var(--text)" }}>{s.value}</strong>
+            <span>({Math.round((s.value / total) * 100)}%)</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DropReasons({ history }: { history: RunLog[] }) {
+  const tally = new Map<string, number>();
+  for (const log of history) {
+    const reason = dropReason(log);
+    if (reason) tally.set(reason, (tally.get(reason) ?? 0) + 1);
+  }
+  const rows = [...tally.entries()].sort((a, b) => b[1] - a[1]);
+  if (rows.length === 0) return null;
+  const max = rows[0][1];
+
+  return (
+    <div style={card({ padding: 16 })}>
+      <div style={sectionLabel()}>Why companies get dropped</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {rows.map(([reason, n]) => (
+          <div key={reason} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
+            <span style={{ width: 150, flexShrink: 0, color: "var(--text-muted)" }}>{reason}</span>
+            <div style={{ flex: 1, background: "var(--muted-soft)", borderRadius: 999, height: 8, overflow: "hidden" }}>
+              <div style={{ width: `${(n / max) * 100}%`, height: "100%", background: "var(--danger)" }} />
+            </div>
+            <strong style={{ width: 18, textAlign: "right" }}>{n}</strong>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const [passcode, setPasscode] = useState("");
   const [rememberedPasscode, setRememberedPasscode] = useState(false);
@@ -338,10 +423,12 @@ export default function Home() {
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<string[]>([]);
   const [results, setResults] = useState<RunLog[]>([]);
+  const [history, setHistory] = useState<RunLog[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   // Remembers the passcode in this browser only, so it's typed once and never shown again here —
   // the server still requires it on every request, so a stranger with the URL still can't run it.
+  // The dashboard's run history is remembered the same way, so counts and past runs survive a reload.
   useEffect(() => {
     try {
       const saved = localStorage.getItem(PASSCODE_STORAGE_KEY);
@@ -352,25 +439,47 @@ export default function Home() {
     } catch {
       // localStorage unavailable (private window, blocked storage) — just show the field.
     }
+    setHistory(loadHistory());
   }, []);
+
+  // One entry per domain: a re-run of the same domain replaces its previous entry instead of duplicating it.
+  function upsertHistory(log: RunLog) {
+    setHistory((prev) => {
+      const next = [...prev.filter((r) => r.domain !== log.domain), { ...log, ranAt: Date.now() }];
+      saveHistory(next);
+      return next;
+    });
+  }
+
+  function clearHistory() {
+    setHistory([]);
+    saveHistory([]);
+  }
 
   const domains = domainsText
     .split("\n")
     .map((d) => d.trim())
     .filter(Boolean);
 
-  const counts = results.reduce(
+  const counts = history.reduce(
     (acc, r) => {
       acc.total++;
       if (r.disposition === "QUALIFIED") acc.qualified++;
       else if (r.disposition === "QUALIFIED_FLAGGED") acc.flagged++;
       else if (r.disposition === "DROPPED") acc.dropped++;
       else if (r.disposition === "MANUAL_REVIEW") acc.review++;
+      else if (r.disposition === "FAILED" || r.error) acc.failed++;
       if (r.send?.status === "sent") acc.sent++;
+      if (typeof r.score === "number") {
+        acc.scoreSum += r.score;
+        acc.scored++;
+      }
       return acc;
     },
-    { total: 0, qualified: 0, flagged: 0, dropped: 0, review: 0, sent: 0 }
+    { total: 0, qualified: 0, flagged: 0, dropped: 0, review: 0, failed: 0, sent: 0, scoreSum: 0, scored: 0 }
   );
+  const avgScore = counts.scored > 0 ? Math.round(counts.scoreSum / counts.scored) : null;
+  const sortedHistory = [...history].sort((a, b) => (b.ranAt ?? 0) - (a.ranAt ?? 0));
 
   async function runBatch() {
     setError(null);
@@ -413,6 +522,7 @@ export default function Home() {
         }
         const log = await res.json();
         setResults((r) => [...r, log]);
+        upsertHistory(log);
         setProgress((p) => [...p.slice(0, -1), `${domain}: ${log.disposition ?? log.error ?? "done"}`]);
       } catch (e) {
         setProgress((p) => [...p.slice(0, -1), `${domain}: request failed`]);
@@ -514,15 +624,31 @@ export default function Home() {
         </section>
       )}
 
-      {results.length > 0 && (
+      {history.length > 0 && (
         <>
-          <div style={sectionLabel()}>Summary</div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 24 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+            <div style={sectionLabel()}>Dashboard · all domains ever run on this device</div>
+            <button
+              onClick={() => confirm(`Clear all ${counts.total} saved runs from this browser?`) && clearHistory()}
+              style={{ background: "none", border: "none", padding: 0, marginBottom: 8, color: "var(--text-muted)", cursor: "pointer", fontSize: 12, textDecoration: "underline" }}
+            >
+              Clear history
+            </button>
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
             <StatTile value={counts.total} label="Domains run" />
             <StatTile value={counts.qualified + counts.flagged} label="Qualified" color="var(--success)" />
             <StatTile value={counts.dropped} label="Dropped" color="var(--danger)" />
             <StatTile value={counts.review} label="Manual review" color="var(--warning)" />
             <StatTile value={counts.sent} label="Emails sent" color="var(--accent)" />
+            <StatTile value={avgScore ?? "—"} label="Avg. score" />
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.3fr) minmax(0, 1fr)", gap: 12, marginBottom: 24 }}>
+            <DispositionBar
+              counts={{ qualified: counts.qualified, flagged: counts.flagged, dropped: counts.dropped, review: counts.review, failed: counts.failed }}
+            />
+            <DropReasons history={history} />
           </div>
 
           <div style={{ overflowX: "auto", marginBottom: 28 }}>
@@ -534,10 +660,11 @@ export default function Home() {
                   <th style={{ padding: "10px 12px" }}>Score</th>
                   <th style={{ padding: "10px 12px" }}>Contact</th>
                   <th style={{ padding: "10px 12px" }}>Send</th>
+                  <th style={{ padding: "10px 12px" }}>Last run</th>
                 </tr>
               </thead>
               <tbody>
-                {results.map((r) => (
+                {sortedHistory.map((r) => (
                   <tr key={r.domain} style={{ borderBottom: "1px solid var(--border)" }}>
                     <td style={{ padding: "10px 12px", fontWeight: 600 }}>{r.domain}</td>
                     <td style={{ padding: "10px 12px" }}>
@@ -548,6 +675,9 @@ export default function Home() {
                     </td>
                     <td style={{ padding: "10px 12px" }}>{r.contact?.winner?.email ?? (r.contact?.noPoc ? "NO_POC" : "—")}</td>
                     <td style={{ padding: "10px 12px" }}>{r.send?.status ?? "—"}</td>
+                    <td style={{ padding: "10px 12px", color: "var(--text-muted)" }}>
+                      {r.ranAt ? new Date(r.ranAt).toLocaleString() : "—"}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -556,7 +686,7 @@ export default function Home() {
 
           <div style={sectionLabel()}>Run details</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {results.map((r) => (
+            {sortedHistory.map((r) => (
               <RunCard key={r.domain} log={r} />
             ))}
           </div>
