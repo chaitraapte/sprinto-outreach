@@ -6,19 +6,73 @@ const DEMO_DOMAINS = ["cal.com", "hasura.io", "zluri.com", "thoughtworks.com", "
 
 type RunLog = any;
 
-function badgeColor(disposition: string): string {
-  switch (disposition) {
-    case "QUALIFIED":
-      return "var(--success)";
-    case "QUALIFIED_FLAGGED":
-      return "var(--warning)";
-    case "DROPPED":
-      return "var(--danger)";
-    case "MANUAL_REVIEW":
-      return "var(--text-muted)";
-    default:
-      return "var(--danger)";
-  }
+const STATUS: Record<string, { color: string; soft: string; label: string }> = {
+  QUALIFIED: { color: "var(--success)", soft: "var(--success-soft)", label: "Qualified" },
+  QUALIFIED_FLAGGED: { color: "var(--warning)", soft: "var(--warning-soft)", label: "Qualified · flagged" },
+  DROPPED: { color: "var(--danger)", soft: "var(--danger-soft)", label: "Dropped" },
+  MANUAL_REVIEW: { color: "var(--text-muted)", soft: "var(--muted-soft)", label: "Manual review" },
+  FAILED: { color: "var(--danger)", soft: "var(--danger-soft)", label: "Failed" },
+};
+
+function statusOf(disposition: string) {
+  return STATUS[disposition] ?? { color: "var(--text-muted)", soft: "var(--muted-soft)", label: disposition };
+}
+
+function Dot({ color }: { color: string }) {
+  return <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: 999, background: color, flexShrink: 0 }} />;
+}
+
+function StatusPill({ disposition }: { disposition: string }) {
+  const s = statusOf(disposition);
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "3px 9px",
+        borderRadius: 999,
+        background: s.soft,
+        color: s.color,
+        fontSize: 12,
+        fontWeight: 600,
+        letterSpacing: "0.01em",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <Dot color={s.color} />
+      {s.label}
+    </span>
+  );
+}
+
+function VerdictPill({ verdict }: { verdict: string }) {
+  const map: Record<string, { color: string; soft: string }> = {
+    pass: { color: "var(--success)", soft: "var(--success-soft)" },
+    fail: { color: "var(--danger)", soft: "var(--danger-soft)" },
+    unresolved: { color: "var(--warning)", soft: "var(--warning-soft)" },
+  };
+  const s = map[verdict] ?? { color: "var(--text-muted)", soft: "var(--muted-soft)" };
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "2px 8px",
+        borderRadius: 999,
+        background: s.soft,
+        color: s.color,
+        fontSize: 11,
+        fontWeight: 700,
+        textTransform: "uppercase",
+        letterSpacing: "0.04em",
+      }}
+    >
+      <Dot color={s.color} />
+      {verdict}
+    </span>
+  );
 }
 
 function downloadJson(log: RunLog) {
@@ -31,22 +85,72 @@ function downloadJson(log: RunLog) {
   URL.revokeObjectURL(url);
 }
 
+function card(extra?: React.CSSProperties): React.CSSProperties {
+  return {
+    background: "var(--surface)",
+    border: "1px solid var(--border)",
+    borderRadius: "var(--radius)",
+    ...extra,
+  };
+}
+
+function sectionLabel(): React.CSSProperties {
+  return { fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 8 };
+}
+
+function StatTile({ value, label, color }: { value: number | string; label: string; color?: string }) {
+  return (
+    <div style={card({ padding: "14px 16px", flex: "1 1 120px" })}>
+      <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.02em", color: color ?? "var(--text)", lineHeight: 1 }}>{value}</div>
+      <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-muted)", marginTop: 6 }}>{label}</div>
+    </div>
+  );
+}
+
 function GateRow({ gate }: { gate: any }) {
   return (
-    <tr>
-      <td>{gate.gate}</td>
-      <td>{gate.name}</td>
-      <td style={{ fontWeight: 600 }}>{gate.verdict}</td>
-      <td style={{ color: "var(--text-muted)" }}>{gate.evidence}</td>
+    <tr style={{ borderTop: "1px solid var(--border)" }}>
+      <td style={{ padding: "7px 8px 7px 0", fontWeight: 700, fontSize: 12, color: "var(--text-muted)" }}>{gate.gate}</td>
+      <td style={{ padding: "7px 8px" }}>{gate.name}</td>
+      <td style={{ padding: "7px 8px" }}>
+        <VerdictPill verdict={gate.verdict} />
+      </td>
+      <td style={{ padding: "7px 0", color: "var(--text-muted)" }}>{gate.evidence}</td>
     </tr>
+  );
+}
+
+function WindowChrome({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={card({ overflow: "hidden" })}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "9px 12px",
+          borderBottom: "1px solid var(--border)",
+          background: "var(--surface-3)",
+        }}
+      >
+        <span style={{ display: "flex", gap: 5 }}>
+          <span style={{ width: 8, height: 8, borderRadius: 999, background: "#f87171" }} />
+          <span style={{ width: 8, height: 8, borderRadius: 999, background: "#fbbf24" }} />
+          <span style={{ width: 8, height: 8, borderRadius: 999, background: "#4ade80" }} />
+        </span>
+        <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 600 }}>{title}</span>
+      </div>
+      {children}
+    </div>
   );
 }
 
 function RunCard({ log }: { log: RunLog }) {
   const [open, setOpen] = useState(false);
+  const s = statusOf(log.disposition);
 
   return (
-    <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius)", background: "var(--surface)", marginBottom: 10 }}>
+    <WindowChrome title={`${log.domain} · run log`}>
       <button
         onClick={() => setOpen((o) => !o)}
         style={{
@@ -59,123 +163,144 @@ function RunCard({ log }: { log: RunLog }) {
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
-          gap: 8,
+          gap: 10,
           flexWrap: "wrap",
         }}
       >
-        <span style={{ fontWeight: 600 }}>{log.domain}</span>
-        <span style={{ color: badgeColor(log.disposition), fontWeight: 600, fontSize: 13 }}>{log.disposition}</span>
-        <span style={{ color: "var(--text-muted)", fontSize: 13 }}>score {log.score} ({log.band})</span>
-        <span style={{ color: "var(--text-muted)", fontSize: 13 }}>{open ? "▲" : "▼"}</span>
+        <span style={{ fontWeight: 700, fontSize: 15 }}>{log.domain}</span>
+        <StatusPill disposition={log.disposition} />
+        <span style={{ color: "var(--text-muted)", fontSize: 13 }}>
+          score <strong style={{ color: "var(--text)" }}>{log.score}</strong>/100 · {log.band}
+        </span>
+        <span style={{ color: "var(--text-muted)", fontSize: 13, marginLeft: "auto" }}>{open ? "▲" : "▼"}</span>
       </button>
 
       {open && (
-        <div style={{ padding: "0 14px 14px", borderTop: "1px solid var(--border)" }}>
-          {log.error && <p style={{ color: "var(--danger)" }}>Error: {log.error}</p>}
-
-          <h4>Reasoning</h4>
-          <ul style={{ color: "var(--text-muted)", fontSize: 13 }}>
-            {log.reasoning?.map((r: string, i: number) => <li key={i}>{r}</li>)}
-          </ul>
-
-          {log.flags?.length > 0 && (
-            <p style={{ color: "var(--warning)", fontSize: 13 }}>Flags: {log.flags.join("; ")}</p>
+        <div style={{ padding: "4px 14px 16px", borderTop: "1px solid var(--border)" }}>
+          {log.error && (
+            <p style={{ color: "var(--danger)", fontSize: 13, marginTop: 12 }}>
+              <Dot color="var(--danger)" /> Error: {log.error}
+            </p>
           )}
 
-          <h4>Gates</h4>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead>
-              <tr style={{ textAlign: "left", color: "var(--text-muted)" }}>
-                <th>Gate</th>
-                <th>Name</th>
-                <th>Verdict</th>
-                <th>Evidence</th>
-              </tr>
-            </thead>
-            <tbody>{log.gates?.map((g: any) => <GateRow key={g.gate} gate={g} />)}</tbody>
-          </table>
+          <div style={{ marginTop: 14 }}>
+            <div style={sectionLabel()}>Activity</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+              {log.reasoning?.map((r: string, i: number) => (
+                <div key={i} style={{ display: "flex", gap: 8, fontSize: 13 }}>
+                  <span style={{ color: "var(--text-muted)", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <span>{r}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {log.flags?.length > 0 && (
+            <p style={{ color: "var(--warning)", fontSize: 13, marginTop: 10, display: "flex", gap: 6, alignItems: "flex-start" }}>
+              <Dot color="var(--warning)" />
+              <span>{log.flags.join("; ")}</span>
+            </p>
+          )}
+
+          {log.gates?.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <div style={sectionLabel()}>Gates</div>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <tbody>{log.gates.map((g: any) => <GateRow key={g.gate} gate={g} />)}</tbody>
+              </table>
+            </div>
+          )}
 
           {log.loopSteps?.length > 0 && (
-            <>
-              <h4>Agent loop</h4>
-              <ul style={{ fontSize: 13 }}>
+            <div style={{ marginTop: 16 }}>
+              <div style={sectionLabel()}>Agent loop</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {log.loopSteps.map((s: any, i: number) => (
-                  <li key={i}>
-                    Iteration {s.iteration} — missing for {s.missingGate}: {s.missingFields.join(", ")} → called <strong>{s.toolCalled}</strong>
-                    {s.toolArg ? ` (${s.toolArg})` : ""} → {s.result}
-                  </li>
+                  <div key={i} style={{ fontSize: 13, background: "var(--muted-soft)", borderRadius: "var(--radius-sm)", padding: "7px 10px" }}>
+                    <strong>{s.missingGate}</strong> missing {s.missingFields.join(", ")} → <strong>{s.toolCalled}</strong>
+                    {s.toolArg ? ` (${s.toolArg})` : ""} <span style={{ color: "var(--text-muted)" }}>— {s.result}</span>
+                  </div>
                 ))}
-              </ul>
-            </>
+              </div>
+            </div>
           )}
 
           {log.contact && (
-            <>
-              <h4>Contact candidates</h4>
+            <div style={{ marginTop: 16 }}>
+              <div style={sectionLabel()}>Contact candidates</div>
               {log.contact.noPoc ? (
-                <p style={{ color: "var(--text-muted)" }}>NO_POC — no candidate qualified, and no override on file.</p>
+                <p style={{ color: "var(--text-muted)", fontSize: 13 }}>NO_POC — no candidate qualified, and no override on file.</p>
               ) : (
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                   <thead>
-                    <tr style={{ textAlign: "left", color: "var(--text-muted)" }}>
-                      <th>Email</th>
-                      <th>Position</th>
-                      <th>Tier</th>
-                      <th>Confidence</th>
-                      <th>Why</th>
+                    <tr style={{ textAlign: "left", color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                      <th style={{ fontWeight: 600, paddingBottom: 6 }}>Email</th>
+                      <th style={{ fontWeight: 600, paddingBottom: 6 }}>Position</th>
+                      <th style={{ fontWeight: 600, paddingBottom: 6 }}>Tier</th>
+                      <th style={{ fontWeight: 600, paddingBottom: 6 }}>Confidence</th>
+                      <th style={{ fontWeight: 600, paddingBottom: 6 }}>Why</th>
                     </tr>
                   </thead>
                   <tbody>
                     {log.contact.topCandidates.map((c: any) => (
-                      <tr key={c.email}>
-                        <td>{c.email}</td>
-                        <td>{c.position}</td>
-                        <td>{c.tier}</td>
-                        <td>{c.confidence}</td>
-                        <td style={{ color: "var(--text-muted)" }}>{c.why}</td>
+                      <tr key={c.email} style={{ borderTop: "1px solid var(--border)" }}>
+                        <td style={{ padding: "6px 8px 6px 0" }}>{c.email}</td>
+                        <td style={{ padding: "6px 8px" }}>{c.position}</td>
+                        <td style={{ padding: "6px 8px" }}>{c.tier}</td>
+                        <td style={{ padding: "6px 8px" }}>{c.confidence}</td>
+                        <td style={{ padding: "6px 0", color: "var(--text-muted)" }}>{c.why}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               )}
-            </>
+            </div>
           )}
 
           {log.pains && (
-            <>
-              <h4>Pain points</h4>
-              <ul style={{ fontSize: 13 }}>
+            <div style={{ marginTop: 16 }}>
+              <div style={sectionLabel()}>Pain points</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {log.pains.map((p: any, i: number) => (
-                  <li key={i}>
-                    <strong>{p.pain}</strong>{p.inferred ? " (inferred)" : ""} — {p.why_this_persona}
-                    {p.evidence_quote && <div style={{ color: "var(--text-muted)" }}>&ldquo;{p.evidence_quote}&rdquo;</div>}
-                  </li>
+                  <div key={i} style={{ fontSize: 13 }}>
+                    <strong>{p.pain}</strong>
+                    {p.inferred ? <span style={{ color: "var(--text-muted)" }}> (inferred)</span> : null} — {p.why_this_persona}
+                    {p.evidence_quote && <div style={{ color: "var(--text-muted)", marginTop: 2 }}>&ldquo;{p.evidence_quote}&rdquo;</div>}
+                  </div>
                 ))}
-              </ul>
-            </>
+              </div>
+            </div>
           )}
 
           {log.email && (
-            <>
-              <h4>Email {log.email.regenerated ? "(regenerated once)" : ""}</h4>
-              <p><strong>Subject:</strong> {log.email.draft?.subject}</p>
-              <p style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{log.email.draft?.body}</p>
+            <div style={{ marginTop: 16 }}>
+              <div style={sectionLabel()}>Email{log.email.regenerated ? " · regenerated once" : ""}</div>
+              <div style={{ background: "var(--muted-soft)", borderRadius: "var(--radius-sm)", padding: 12, marginBottom: 10 }}>
+                <p style={{ margin: "0 0 6px", fontSize: 13 }}>
+                  <strong>Subject:</strong> {log.email.draft?.subject}
+                </p>
+                <p style={{ whiteSpace: "pre-wrap", fontSize: 13, margin: 0 }}>{log.email.draft?.body}</p>
+              </div>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <tbody>
                   {log.email.checks.map((c: any) => (
-                    <tr key={c.name}>
-                      <td style={{ color: c.passed ? "var(--success)" : "var(--danger)" }}>{c.passed ? "✓" : "✗"}</td>
-                      <td>{c.name}</td>
-                      <td style={{ color: "var(--text-muted)" }}>{c.detail}</td>
+                    <tr key={c.name} style={{ borderTop: "1px solid var(--border)" }}>
+                      <td style={{ padding: "5px 8px 5px 0", width: 20 }}>
+                        <Dot color={c.passed ? "var(--success)" : "var(--danger)"} />
+                      </td>
+                      <td style={{ padding: "5px 8px" }}>{c.name}</td>
+                      <td style={{ padding: "5px 0", color: "var(--text-muted)" }}>{c.detail}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </>
+            </div>
           )}
 
           {log.send && (
-            <p>
+            <p style={{ fontSize: 13, marginTop: 16 }}>
               <strong>Send:</strong> {log.send.status} — {log.send.detail}
             </p>
           )}
@@ -185,19 +310,20 @@ function RunCard({ log }: { log: RunLog }) {
           </button>
         </div>
       )}
-    </div>
+    </WindowChrome>
   );
 }
 
 function buttonStyle(kind: "primary" | "secondary"): React.CSSProperties {
   return {
-    padding: "8px 14px",
-    borderRadius: "var(--radius)",
+    padding: "9px 16px",
+    borderRadius: "var(--radius-sm)",
     border: kind === "primary" ? "none" : "1px solid var(--border)",
     background: kind === "primary" ? "var(--accent)" : "var(--surface)",
     color: kind === "primary" ? "var(--on-accent)" : "var(--text)",
     cursor: "pointer",
     fontSize: 14,
+    fontWeight: 600,
     marginTop: 8,
   };
 }
@@ -215,6 +341,19 @@ export default function Home() {
     .split("\n")
     .map((d) => d.trim())
     .filter(Boolean);
+
+  const counts = results.reduce(
+    (acc, r) => {
+      acc.total++;
+      if (r.disposition === "QUALIFIED") acc.qualified++;
+      else if (r.disposition === "QUALIFIED_FLAGGED") acc.flagged++;
+      else if (r.disposition === "DROPPED") acc.dropped++;
+      else if (r.disposition === "MANUAL_REVIEW") acc.review++;
+      if (r.send?.status === "sent") acc.sent++;
+      return acc;
+    },
+    { total: 0, qualified: 0, flagged: 0, dropped: 0, review: 0, sent: 0 }
+  );
 
   async function runBatch() {
     setError(null);
@@ -254,38 +393,55 @@ export default function Home() {
   }
 
   return (
-    <main style={{ maxWidth: 820, margin: "0 auto", padding: "24px 16px" }}>
-      <h1 style={{ marginBottom: 4 }}>Sprinto Outreach</h1>
-      <p style={{ color: "var(--text-muted)", marginTop: 0 }}>Scrape → qualify → find contact → draft → send, with every decision logged.</p>
+    <main style={{ maxWidth: 860, margin: "0 auto", padding: "40px 16px 60px" }}>
+      <header style={{ marginBottom: 28 }}>
+        <h1 style={{ margin: 0, fontSize: 34, fontWeight: 800, letterSpacing: "-0.02em", lineHeight: 1.1 }}>
+          Cold outreach, <span style={{ color: "var(--accent)" }}>every decision logged.</span>
+        </h1>
+        <p style={{ color: "var(--text-muted)", marginTop: 10, fontSize: 15 }}>
+          Scrape → qualify → find contact → draft → send — run by the rules in <code>evidence_map.yaml</code>, not a vibe.
+        </p>
+      </header>
 
-      <section style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: 16, marginBottom: 16 }}>
-        <label style={{ display: "block", marginBottom: 10 }}>
-          <div style={{ fontSize: 13, marginBottom: 4 }}>Passcode</div>
+      <section style={card({ padding: 20, marginBottom: 20 })}>
+        <label style={{ display: "block", marginBottom: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+            Passcode
+          </div>
           <input
             type="password"
             value={passcode}
             onChange={(e) => setPasscode(e.target.value)}
-            style={{ width: "100%", padding: 8, borderRadius: "var(--radius)", border: "1px solid var(--border)" }}
+            style={{ width: "100%", padding: "9px 11px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", fontSize: 14 }}
           />
         </label>
 
-        <label style={{ display: "block", marginBottom: 10 }}>
-          <div style={{ fontSize: 13, marginBottom: 4 }}>Domains (one per line, max 8)</div>
+        <label style={{ display: "block", marginBottom: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+            Domains (one per line, max 8)
+          </div>
           <textarea
             value={domainsText}
             onChange={(e) => setDomainsText(e.target.value)}
             rows={6}
             placeholder={"cal.com\nhasura.io\n..."}
-            style={{ width: "100%", padding: 8, borderRadius: "var(--radius)", border: "1px solid var(--border)", fontFamily: "monospace", fontSize: 13 }}
+            style={{
+              width: "100%",
+              padding: "9px 11px",
+              borderRadius: "var(--radius-sm)",
+              border: "1px solid var(--border)",
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+              fontSize: 13,
+            }}
           />
         </label>
 
-        <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, fontSize: 14 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, fontSize: 14 }}>
           <input type="checkbox" checked={sendToInbox} onChange={(e) => setSendToInbox(e.target.checked)} />
           Send to my inbox
         </label>
 
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <button onClick={runBatch} disabled={running} style={buttonStyle("primary")}>
             {running ? "Running…" : "Run"}
           </button>
@@ -294,11 +450,15 @@ export default function Home() {
           </button>
         </div>
 
-        {error && <p style={{ color: "var(--danger)", marginTop: 10 }}>{error}</p>}
+        {error && (
+          <p style={{ color: "var(--danger)", marginTop: 12, fontSize: 13, display: "flex", gap: 6, alignItems: "center" }}>
+            <Dot color="var(--danger)" /> {error}
+          </p>
+        )}
       </section>
 
       {progress.length > 0 && (
-        <section style={{ marginBottom: 16, fontSize: 13, color: "var(--text-muted)" }}>
+        <section style={{ marginBottom: 20, fontSize: 13, color: "var(--text-muted)", display: "flex", flexDirection: "column", gap: 3 }}>
           {progress.map((p, i) => (
             <div key={i}>{p}</div>
           ))}
@@ -307,38 +467,50 @@ export default function Home() {
 
       {results.length > 0 && (
         <>
-          <h2>Summary</h2>
-          <div style={{ overflowX: "auto", marginBottom: 20 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, background: "var(--surface)" }}>
+          <div style={sectionLabel()}>Summary</div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 24 }}>
+            <StatTile value={counts.total} label="Domains run" />
+            <StatTile value={counts.qualified + counts.flagged} label="Qualified" color="var(--success)" />
+            <StatTile value={counts.dropped} label="Dropped" color="var(--danger)" />
+            <StatTile value={counts.review} label="Manual review" color="var(--warning)" />
+            <StatTile value={counts.sent} label="Emails sent" color="var(--accent)" />
+          </div>
+
+          <div style={{ overflowX: "auto", marginBottom: 28 }}>
+            <table style={card({ width: "100%", borderCollapse: "collapse", fontSize: 13 })}>
               <thead>
                 <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
-                  <th style={{ padding: 6 }}>Domain</th>
-                  <th style={{ padding: 6 }}>Disposition</th>
-                  <th style={{ padding: 6 }}>Score</th>
-                  <th style={{ padding: 6 }}>Contact</th>
-                  <th style={{ padding: 6 }}>Send</th>
+                  <th style={{ padding: "10px 12px" }}>Domain</th>
+                  <th style={{ padding: "10px 12px" }}>Disposition</th>
+                  <th style={{ padding: "10px 12px" }}>Score</th>
+                  <th style={{ padding: "10px 12px" }}>Contact</th>
+                  <th style={{ padding: "10px 12px" }}>Send</th>
                 </tr>
               </thead>
               <tbody>
                 {results.map((r) => (
                   <tr key={r.domain} style={{ borderBottom: "1px solid var(--border)" }}>
-                    <td style={{ padding: 6 }}>{r.domain}</td>
-                    <td style={{ padding: 6, color: badgeColor(r.disposition), fontWeight: 600 }}>{r.disposition}</td>
-                    <td style={{ padding: 6, textAlign: "right" }}>
-                      {r.score}/100 ({r.band})
+                    <td style={{ padding: "10px 12px", fontWeight: 600 }}>{r.domain}</td>
+                    <td style={{ padding: "10px 12px" }}>
+                      <StatusPill disposition={r.disposition} />
                     </td>
-                    <td style={{ padding: 6 }}>{r.contact?.winner?.email ?? (r.contact?.noPoc ? "NO_POC" : "—")}</td>
-                    <td style={{ padding: 6 }}>{r.send?.status ?? "—"}</td>
+                    <td style={{ padding: "10px 12px" }}>
+                      {r.score}/100 <span style={{ color: "var(--text-muted)" }}>({r.band})</span>
+                    </td>
+                    <td style={{ padding: "10px 12px" }}>{r.contact?.winner?.email ?? (r.contact?.noPoc ? "NO_POC" : "—")}</td>
+                    <td style={{ padding: "10px 12px" }}>{r.send?.status ?? "—"}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
 
-          <h2>Run details</h2>
-          {results.map((r) => (
-            <RunCard key={r.domain} log={r} />
-          ))}
+          <div style={sectionLabel()}>Run details</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {results.map((r) => (
+              <RunCard key={r.domain} log={r} />
+            ))}
+          </div>
         </>
       )}
     </main>
