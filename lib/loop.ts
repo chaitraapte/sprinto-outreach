@@ -106,13 +106,16 @@ export async function runAgentLoop(domain: string, companyName: string, homepage
       ],
     });
 
-    const call = res.choices[0]?.message?.tool_calls?.[0];
+    const rawCall = res.choices[0]?.message?.tool_calls?.[0];
     iteration++;
 
-    if (!call) {
+    // The SDK's tool-call type is a union of function/custom calls; we only ever offer
+    // function tools (fetch_page, search_news), so narrow to that before reading .function.
+    if (!rawCall || rawCall.type !== "function") {
       steps.push({ iteration, missingGate: unresolved.gate, missingFields: missing, toolCalled: "none", toolArg: "", result: "Model made no tool call" });
       break;
     }
+    const call = rawCall;
 
     let args: any = {};
     try {
