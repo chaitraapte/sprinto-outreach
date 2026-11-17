@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+
+const PASSCODE_STORAGE_KEY = "sprinto-outreach-passcode";
 
 const DEMO_DOMAINS = ["cal.com", "hasura.io", "zluri.com", "thoughtworks.com", "hubspot.com", "drata.com"];
 
@@ -330,12 +332,27 @@ function buttonStyle(kind: "primary" | "secondary"): React.CSSProperties {
 
 export default function Home() {
   const [passcode, setPasscode] = useState("");
+  const [rememberedPasscode, setRememberedPasscode] = useState(false);
   const [domainsText, setDomainsText] = useState("");
   const [sendToInbox, setSendToInbox] = useState(true);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<string[]>([]);
   const [results, setResults] = useState<RunLog[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  // Remembers the passcode in this browser only, so it's typed once and never shown again here —
+  // the server still requires it on every request, so a stranger with the URL still can't run it.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(PASSCODE_STORAGE_KEY);
+      if (saved) {
+        setPasscode(saved);
+        setRememberedPasscode(true);
+      }
+    } catch {
+      // localStorage unavailable (private window, blocked storage) — just show the field.
+    }
+  }, []);
 
   const domains = domainsText
     .split("\n")
@@ -380,7 +397,19 @@ export default function Home() {
         if (res.status === 401) {
           setError("Wrong passcode.");
           setRunning(false);
+          setRememberedPasscode(false);
+          try {
+            localStorage.removeItem(PASSCODE_STORAGE_KEY);
+          } catch {
+            // ignore
+          }
           return;
+        }
+        try {
+          localStorage.setItem(PASSCODE_STORAGE_KEY, passcode);
+          setRememberedPasscode(true);
+        } catch {
+          // ignore — just means it'll have to be typed again next visit
         }
         const log = await res.json();
         setResults((r) => [...r, log]);
@@ -404,17 +433,37 @@ export default function Home() {
       </header>
 
       <section style={card({ padding: 20, marginBottom: 20 })}>
-        <label style={{ display: "block", marginBottom: 14 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
-            Passcode
-          </div>
-          <input
-            type="password"
-            value={passcode}
-            onChange={(e) => setPasscode(e.target.value)}
-            style={{ width: "100%", padding: "9px 11px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", fontSize: 14 }}
-          />
-        </label>
+        {rememberedPasscode ? (
+          <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 0, marginBottom: 14 }}>
+            Passcode remembered on this device.{" "}
+            <button
+              onClick={() => {
+                setPasscode("");
+                setRememberedPasscode(false);
+                try {
+                  localStorage.removeItem(PASSCODE_STORAGE_KEY);
+                } catch {
+                  // ignore
+                }
+              }}
+              style={{ background: "none", border: "none", padding: 0, color: "var(--accent)", cursor: "pointer", fontSize: 12, textDecoration: "underline" }}
+            >
+              Forget it
+            </button>
+          </p>
+        ) : (
+          <label style={{ display: "block", marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+              Passcode
+            </div>
+            <input
+              type="password"
+              value={passcode}
+              onChange={(e) => setPasscode(e.target.value)}
+              style={{ width: "100%", padding: "9px 11px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", fontSize: 14 }}
+            />
+          </label>
+        )}
 
         <label style={{ display: "block", marginBottom: 14 }}>
           <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
