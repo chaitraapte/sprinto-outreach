@@ -1,0 +1,165 @@
+# evidence_map.yaml: the whole shortlisting policy for the Sprinto pipeline.
+# Code reads this file. Edit a rule here, rerun, no code change.
+# The LLM only extracts facts into the named fields. Code applies every rule below.
+
+icp_summary: >
+  Series A-C B2B SaaS, roughly 50-200 people, with audit pressure (SOC 2 / ISO 27001
+  being prepped, or demanded by enterprise customers), selling into US/EU/India,
+  and NOT already certified. Urgent compliance need, no GRC team yet.
+
+fields:   # facts the extractor must fill; null = not found
+  - is_saas                 # bool
+  - buyer_named             # string, who buys it
+  - funding_stage           # pre-seed|seed|A|B|C|D+|public|acquired|bootstrapped|null
+  - funding_evidence        # quote or headline
+  - headcount_low           # int|null
+  - headcount_high          # int|null
+  - open_roles_count        # int|null
+  - compliance_roles_open   # list of titles
+  - certs_held              # achieved certs only (badge, "certified", report available)
+  - certs_in_progress       # "in progress", "working toward", "coming soon", "preparing"
+  - enterprise_tier         # bool, from pricing page
+  - enterprise_logos        # list of named customers
+  - security_questionnaire_language   # bool, trust-centre or questionnaire wording
+  - selling_regions         # list: US, EU, IN, other
+  - industry                # fintech|healthtech|hrtech|devtools|other
+  - cloud_provider          # AWS|GCP|Azure|null  (hook only, never scored)
+
+budgets:                 # enforced in code, not only in the prompt
+  fetch_page_max: 4      # beyond the homepage, per company
+  search_news_max: 2     # per company
+  loop_iterations_max: 3
+  page_token_cap: 2000   # cleaned text per page
+  thin_page_words: 200   # below this, log thin_signal and let the loop fetch another page (no headless browser on Vercel)
+  at_cap: manual_review  # a cap is a designed handoff, not a failure
+  cache: in_memory_per_instance   # Vercel disk is read-only except /tmp; never rely on it
+
+runtime:
+  platform: vercel       # Next.js App Router, TypeScript, Node runtime (not Edge)
+  unit_of_work: one_domain_per_request   # batch = the browser calls /api/run once per domain, in sequence
+  max_duration_seconds: 120              # Hobby allows up to 300
+  run_log: returned_in_response_and_shown_in_ui   # also downloadable as JSON; no filesystem writes
+  protection:
+    passcode_env: DEMO_PASSCODE          # every API call must send it; otherwise 401
+    send_to_env: SEND_TO                 # server-side only, never taken from the request
+    max_domains_per_batch: 8
+    hunter_guard: "refuse to call Hunter when the passcode is missing or the domain failed a gate"
+
+gates:                   # evaluated in this order, cheapest first
+  G1:
+    name: B2B SaaS
+    pass_when: "is_saas == true and buyer_named is not null"
+    fail_when: "is_saas == false (agency, services, D2C, hardware, consumer)"
+    sources: [homepage, /pricing, /product, /about]
+    unresolved: manual_review
+    short_circuit: true
+  G2:
+    name: Stage window
+    pass_when: >
+      funding_stage in [A, B, C]  (strong), OR at least two of
+      [open_roles_count >= 5, enterprise_tier or enterprise_logos, headcount overlaps 50-200] (inferred)
+    fail_when: >
+      POSITIVE evidence outside the window only: funding_stage in [D+, public, acquired],
+      or headcount_low > 1000, or headcount_high < 15
+    sources: [/careers, /pricing, /customers, news]
+    unresolved: qualify_and_flag   # "stage unknown", email must not mention funding
+    short_circuit: true
+    note: >
+      Unknown is not a fail. L4 Evidence Map: stage unanswered means qualify at lower rank,
+      flagged. We only drop on evidence that the company is wrong, never on a missing search hit.
+  G3:
+    name: Not already certified
+    pass_when: "certs_held is empty"
+    fail_when: "certs_held contains SOC 2, ISO 27001, GDPR or HIPAA as ACHIEVED"
+    sources: [footer, /security, /trust]
+    unresolved: assume_not_certified_and_flag
+    short_circuit: true
+    note: "'In progress' goes in certs_in_progress and is a BUY signal (G4), never a fail."
+  G4:
+    name: Audit pressure
+    pass_when: >
+      certs_in_progress non-empty, OR compliance_roles_open non-empty,
+      OR (enterprise_tier and no certs_held), OR security_questionnaire_language
+    sources: [/careers, /security, /pricing, news]
+    unresolved: qualify_and_flag   # email uses a question hook
+    short_circuit: false           # the only gate allowed to stay unknown
+
+decision:
+  qualify: "G1 pass, G2 pass, G3 pass, G4 pass"
+  qualify_and_flag: "G1 pass, no gate failed, and G2 / G3 / G4 unresolved; flag lists which"
+  drop: "any gate fails"
+  manual_review: "G1 unresolved, or loop/budget cap hit before G1 settled"
+
+score:                   # 0-100, ranks the send order only. Never drops a company.
+  G4_pressure_strength:  # cap 30
+    certs_in_progress: 15
+    compliance_role_open: 10
+    enterprise_tier_or_questionnaire_language: 5
+  S1_headcount:          # 25
+    overlaps_50_200: 25
+    near_30_49_or_201_400: 10
+    unknown: 0
+  S2_enterprise_customers:  # 20
+    two_or_more_logos_or_enterprise_case_study: 20
+    selling_us_or_eu_only: 10
+  S3_industry:           # 20
+    fintech_healthtech: 20
+    devtools_hrtech: 12
+    other: 6
+  S4_funding_confirmed:  # 5
+    named_series_A_to_C: 5
+  S5_cloud_provider: 0   # hook only
+  bands:
+    priority: ">= 70"
+    standard: "40-69"
+    low_flagged: "< 40"  # still drafted, marked for human review
+
+poc:
+  source: hunter       # fallback: data/poc_overrides.json, bundled with the app (manual Apollo lookups)
+  hunter:
+    max_searches_per_domain: 2   # free tier is 25/month, only counted when results return
+    try_filtered_first: "seniority=senior,executive&department=executive,it,management"
+    free_plan_limit_plus_offset: 10
+    dev_key: test-api-key        # returns dummy data, costs nothing
+  min_confidence: 70
+  exclude:
+    type: generic                # info@, support@, sales@
+    departments: [hr, sales, marketing, support, finance, legal]
+    title_words: [intern, assistant, associate, coordinator, recruiter, advisor, former, board]
+    verification_status: [invalid]
+  matching: whole_word_or_phrase_only   # "cto" must NOT match "Director"
+  tiers:
+    1: [head of security, ciso, chief information security officer, compliance lead, grc lead, head of grc, security lead, head of compliance, director of security]
+    2: [cto, chief technology officer, vp engineering, vp of engineering, head of engineering]
+    3: [ceo, chief executive officer, co-founder, cofounder, founder]
+  tier_3_only_when: "headcount_high < 80 or headcount unknown"
+  pick: "highest tier, then highest confidence, then verification == valid"
+  if_none: "NO_POC -> poc_overrides.json -> else manual_review. Never fall back to 'nearest manager'."
+  log_top_candidates: 3
+
+pains:
+  count: 2
+  each_requires: [pain, evidence_quote_from_scraped_text, why_this_persona]
+  no_evidence: "mark as inferred; only allowed from the persona defaults"
+  persona_defaults:
+    security_or_compliance: ["manual evidence collection across tools", "staying continuously audit-ready"]
+    cto_or_engineering: ["engineers pulled off roadmap for audit evidence", "enterprise security questionnaires slowing deals"]
+    ceo_or_founder: ["enterprise deals stalling on security review", "audit becoming a distraction from growth"]
+
+email:
+  to: SELF_ONLY            # hardcoded to the user's own address, asserted before send
+  max_words: 120
+  max_subject_words: 8
+  one_ask: "a short call"
+  hook_must_be_grounded: "hook_source string must appear verbatim in scraped text"
+  g4_unknown: "phrase the hook as a question, not an assertion"
+  g2_unknown: "do not mention funding or stage"
+  banned: [revolutionise, seamless, supercharge, game-changing, leverage, synergy, "hope this finds you well"]
+  checks_on_fail: "regenerate once, then flag"
+
+failure:
+  fetch_timeout: "retry 2, then FAILED(fetch), continue batch"
+  robots_or_403_or_login_or_cloudflare: "do not bypass; manual_review"
+  llm_rate_limit_or_bad_json: "retry 2 with backoff, then FAILED"
+  hunter_quota_or_empty: "poc_overrides.json, else NO_POC"
+  gmail_error: "retry once, save .eml, report"

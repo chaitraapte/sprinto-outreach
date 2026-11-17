@@ -1,0 +1,15 @@
+.env
+.env*.local
+runs/
+.cache/
+__pycache__/
+.venv/
+
+# Next.js
+.next/
+out/
+build/
+node_modules/
+*.log
+.DS_Store
+*.tsbuildinfo
